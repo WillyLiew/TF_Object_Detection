@@ -1,0 +1,82 @@
+import cv2 
+import numpy as np
+
+
+from object_detection.utils import label_map_util  ###doku.gaku
+from object_detection.utils import config_util     ###doku.gaku
+from object_detection.utils import visualization_utils as viz_utils     ###doku.gaku
+from object_detection.builders import model_builder     ###doku.gaku
+
+import tensorflow as tf
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+# Load pipeline config and build a detection model
+configs = config_util.get_configs_from_pipeline_file('C:/Users/USER/Desktop/RealTimeObjectDetection-main/Tensorflow/workspace/models/my_ssd_mobnet/pipeline.config')
+detection_model = model_builder.build(model_config=configs['model'], is_training=False)
+
+# Restore checkpoint
+ckpt = tf.compat.v2.train.Checkpoint(model=detection_model)
+ckpt.restore('C:/Users/USER/Desktop/RealTimeObjectDetection-main/Tensorflow/workspace/models/my_ssd_mobnet/ckpt-8').expect_partial()
+
+@tf.function
+def detect_fn(image):
+    image, shapes = detection_model.preprocess(image)
+    prediction_dict = detection_model.predict(image, shapes)
+    detections = detection_model.postprocess(prediction_dict, shapes)
+    return detections
+    
+category_index = label_map_util.create_category_index_from_labelmap('C:/Users/USER/Desktop/RealTimeObjectDetection-main/Tensorflow/workspace/annotations/label_map.pbtxt')
+
+# Create a VideoCapture object and read from input file
+# If the input is the camera, pass 0 instead of the video file name
+cap = cv2.VideoCapture('C:/Users/USER/Desktop/RealTimeObjectDetection-main/Tensorflow/workspace/clip1.mp4')
+
+# Check if camera opened successfully
+if (cap.isOpened()== False): 
+  print("Error opening video stream or file")
+
+# Read until video is completed
+while(cap.isOpened()):
+  # Capture frame-by-frame
+  ret, frame = cap.read()
+  image_np = np.array(frame)  # convert frame to numpy array
+    
+  input_tensor = tf.convert_to_tensor(np.expand_dims(image_np, 0), dtype=tf.float32)
+  detections = detect_fn(input_tensor)
+  
+  num_detections = int(detections.pop('num_detections'))  # return number of object detected
+  detections = {key: value[0, :num_detections].numpy()    # preprocessing
+                for key, value in detections.items()}     
+  detections['num_detections'] = num_detections
+
+  # detection_classes should be ints.
+  detections['detection_classes'] = detections['detection_classes'].astype(np.int64)
+
+  label_id_offset = 1
+  image_np_with_detections = image_np.copy()
+
+  viz_utils.visualize_boxes_and_labels_on_image_array(
+              image_np_with_detections,
+              detections['detection_boxes'],
+              detections['detection_classes']+label_id_offset,
+              detections['detection_scores'],
+              category_index,
+              use_normalized_coordinates=True,
+              max_boxes_to_draw=5,
+              min_score_thresh=.5,
+              agnostic_mode=False)
+
+  # display the output on screen
+  cv2.imshow('object detection',  cv2.resize(image_np_with_detections, (800, 600)))
+  #cv2_imshow(image_np_with_detections)
+
+  # Press Q on keyboard to  exit
+  if cv2.waitKey(25) & 0xFF == ord('q'):
+    break
+
+# When everything done, release the video capture object
+cap.release()
+
+# Closes all the frames
+cv2.destroyAllWindows()
